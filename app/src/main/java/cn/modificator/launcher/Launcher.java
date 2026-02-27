@@ -12,10 +12,13 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.content.res.ColorStateList;
+import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.text.TextUtils;
 import android.text.format.DateFormat;
 import android.view.KeyEvent;
@@ -24,16 +27,17 @@ import android.view.WindowManager;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Locale;
+import java.util.Set;
 
 import cn.modificator.launcher.ftpservice.FTPReceiver;
 import cn.modificator.launcher.ftpservice.FTPService;
 import cn.modificator.launcher.model.AdminReceiver;
 import cn.modificator.launcher.model.AppDataCenter;
 import cn.modificator.launcher.model.HomeEntranceService;
+import cn.modificator.launcher.model.IconCache;
 import cn.modificator.launcher.model.WifiControl;
 import cn.modificator.launcher.widgets.BatteryView;
 import cn.modificator.launcher.widgets.EInkLauncherView;
@@ -41,7 +45,7 @@ import cn.modificator.launcher.widgets.EInkLauncherView;
 /**
  * 主界面 Activity - E-Ink 墨水屏桌面启动器。
  */
-public class Launcher extends Activity {
+public class Launcher extends Activity implements EInkLauncherView.Callback {
 
   /** 广播 Action：设置页通过广播通知主界面刷新 */
   public static final String ACTION_LAUNCHER_UPDATE = "launcherReceiver";
@@ -60,6 +64,8 @@ public class Launcher extends Activity {
   private Config config;
   private Calendar calendar;
   private boolean isChina = true;
+  private IconCache iconCache;
+  private boolean isSystemApp = false;
 
   // ---- Device Admin ----
   private DevicePolicyManager policyManager;
@@ -89,7 +95,7 @@ public class Launcher extends Activity {
   private final BroadcastReceiver appChangeReceiver = new BroadcastReceiver() {
     @Override
     public void onReceive(Context context, Intent intent) {
-      launcherView.clearAppCache();
+      iconCache.clearAppCache();
       dataCenter.refreshAppList(launcherView.isDelete());
     }
   };
@@ -99,8 +105,8 @@ public class Launcher extends Activity {
     public void onReceive(Context context, Intent intent) {
       String action = intent.getAction();
       if (Intent.ACTION_MEDIA_MOUNTED.equals(action)) {
-        launcherView.markIconCacheDirty();
-        launcherView.refreshReplaceIcon();
+        iconCache.markDirty();
+        refreshIcons();
       }
     }
   };
@@ -129,9 +135,7 @@ public class Launcher extends Activity {
   protected void onResume() {
     super.onResume();
     registerDynamicReceivers();
-    if (launcherView != null) {
-      launcherView.refreshReplaceIcon();
-    }
+    refreshIcons();
   }
 
   @Override
@@ -167,9 +171,10 @@ public class Launcher extends Activity {
             ColorStateList.valueOf(0xff000000)));
 
     // 配置 LauncherView
+    iconCache = new IconCache();
+    launcherView.setCallback(this);
+    launcherView.setIconCache(iconCache);
     launcherView.setHideAppPkg(config.getHideApps());
-    launcherView.setHideDivider(config.isHideDivider());
-    launcherView.setFontSize(config.getFontSize());
 
     // 初始化数据中心
     dataCenter = new AppDataCenter(this);
@@ -177,11 +182,11 @@ public class Launcher extends Activity {
     dataCenter.setPageStatus(pageStatus);
     dataCenter.setLauncherView(launcherView);
 
-    // 加载之前保存的桌面布局（批量更新避免双重重建）
-    int savedCol = config.getColNum();
-    int savedRow = config.getRowNum();
-    launcherView.setGridSize(savedCol, savedRow);
-    dataCenter.setGridSize(savedCol, savedRow);
+    // 一次性配置网格参数，避免多次重建
+    launcherView.configure(
+        config.getColNum(), config.getRowNum(),
+        config.isHideDivider(), config.getFontSize(), config.getAppNameLines());
+    dataCenter.setGridSize(config.getColNum(), config.getRowNum());
 
     // 翻页按钮
     findViewById(R.id.lastPage).setOnClickListener(new View.OnClickListener() {
@@ -219,26 +224,14 @@ public class Launcher extends Activity {
       }
     });
 
-    // 滑动翻页
-    launcherView.setTouchListener(new EInkLauncherView.TouchListener() {
-      @Override
-      public void toNext() {
-        dataCenter.showNextPage();
-      }
-
-      @Override
-      public void toLast() {
-        dataCenter.showLastPage();
-      }
-    });
-
     // 时间显示
     calendar = Calendar.getInstance();
     updateTimeShow();
 
-    // 检测是否是系统应用
+    // 检测系统应用
     try {
-      launcherView.setSystemApp(!isUserApp(getPackageManager().getPackageInfo(getPackageName(), 0)));
+      isSystemApp = !isUserApp(getPackageManager().getPackageInfo(getPackageName(), 0));
+      launcherView.setSystemApp(isSystemApp);
     } catch (PackageManager.NameNotFoundException e) {
       e.printStackTrace();
     }
@@ -258,6 +251,118 @@ public class Launcher extends Activity {
     launcherView.setColNum(colNum);
     dataCenter.setColNum(colNum);
     config.setColNum(colNum);
+  }
+
+  private void refreshIcons() {
+    if (launcherView == null || iconCache == null) return;
+    iconCache.refreshCustomIcons(getExternalCacheDir() != null, config.isShowCustomIcon());
+    launcherView.refreshDisplay();
+  }
+
+  // =========================================================================
+  // EInkLauncherView.Callback 实现
+  // =========================================================================
+
+  @Override
+  public void onItemClick(ResolveInfo info) {
+    String pkgName = info.activityInfo.packageName;
+
+    if (AppDataCenter.LOCK_PACKAGE_NAME.equals(pkgName)) {
+      lockScreen();
+    } else if (AppDataCenter.WIFI_PACKAGE_NAME.equals(pkgName)) {
+      WifiControl.onClickWifiItem();
+    } else {
+      ComponentName comp = new ComponentName(info.activityInfo.packageName, info.activityInfo.name);
+      Intent intent = new Intent(Intent.ACTION_MAIN);
+      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+      intent.addCategory(Intent.CATEGORY_LAUNCHER);
+      intent.setComponent(comp);
+      startActivity(intent);
+    }
+  }
+
+  @Override
+  public void onItemLongClick(View anchor, ResolveInfo info) {
+    String packageName = info.activityInfo.packageName;
+
+    if (AppDataCenter.LOCK_PACKAGE_NAME.equals(packageName)) {
+      showPowerMenu();
+    } else if (AppDataCenter.WIFI_PACKAGE_NAME.equals(packageName)) {
+      WifiControl.onLongClickWifiItem();
+    } else {
+      showAppInfoDialog(info, packageName);
+    }
+  }
+
+  @Override
+  public void onItemDeleteClick(ResolveInfo info) {
+    Intent deleteIntent = new Intent(Intent.ACTION_DELETE,
+        Uri.parse("package:" + info.activityInfo.packageName));
+    startActivity(deleteIntent);
+  }
+
+  @Override
+  public void onItemHideToggle(String packageName, boolean hidden) {
+    // 管理模式下的隐藏切换仅更新 UI 状态，"完成" 按钮处理持久化
+  }
+
+  @Override
+  public void onSwipeNext() {
+    dataCenter.showNextPage();
+  }
+
+  @Override
+  public void onSwipePrev() {
+    dataCenter.showLastPage();
+  }
+
+  private void showPowerMenu() {
+    if (!isSystemApp) return;
+    new AlertDialog.Builder(this)
+        .setTitle(R.string.power_title)
+        .setItems(R.array.power_menu, new DialogInterface.OnClickListener() {
+          @Override
+          public void onClick(DialogInterface dialog, int which) {
+            if (which == 0) {
+              Intent intent = new Intent("android.intent.action.ACTION_REQUEST_SHUTDOWN");
+              intent.putExtra("android.intent.extra.KEY_CONFIRM", false);
+              intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+              startActivity(intent);
+            } else {
+              PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+              pm.reboot("重启");
+            }
+          }
+        })
+        .setPositiveButton(R.string.dialog_cancel, null)
+        .show();
+  }
+
+  private void showAppInfoDialog(ResolveInfo info, final String packageName) {
+    new AlertDialog.Builder(this)
+        .setIcon(iconCache.getIcon(packageName, info, getPackageManager()))
+        .setTitle(iconCache.getLabel(packageName, info, getPackageManager()))
+        .setMessage(getString(R.string.dialog_pkg_name, packageName))
+        .setPositiveButton(R.string.dialog_cancel, null)
+        .setNeutralButton(R.string.dialog_hide, new DialogInterface.OnClickListener() {
+          @Override
+          public void onClick(DialogInterface dialog, int which) {
+            Set<String> hideApps = launcherView.getHideAppPkg();
+            if (!hideApps.add(packageName)) {
+              hideApps.remove(packageName);
+            }
+            dataCenter.refreshAppList();
+          }
+        })
+        .setNegativeButton(R.string.dialog_uninstall, new DialogInterface.OnClickListener() {
+          @Override
+          public void onClick(DialogInterface dialog, int which) {
+            Intent deleteIntent = new Intent(Intent.ACTION_DELETE,
+                Uri.parse("package:" + packageName));
+            startActivity(deleteIntent);
+          }
+        })
+        .show();
   }
 
   // =========================================================================
@@ -427,13 +532,13 @@ public class Launcher extends Activity {
         applyStatusBarVisibility();
       } else if (bundle.containsKey(Config.KEY_SHOW_CUSTOM_ICON)) {
         config.setShowCustomIcon(bundle.getBoolean(Config.KEY_SHOW_CUSTOM_ICON));
-        launcherView.markIconCacheDirty();
-        launcherView.refreshReplaceIcon();
+        iconCache.markDirty();
+        refreshIcons();
       } else if (bundle.containsKey(Config.KEY_APP_NAME_LINES)) {
         int lines = bundle.getInt(Config.KEY_APP_NAME_LINES);
         if (lines == 3) lines = Integer.MAX_VALUE;
         config.setAppNameLines(lines);
-        launcherView.updateAppNameLines();
+        launcherView.setAppNameLines(lines);
       }
     }
   }

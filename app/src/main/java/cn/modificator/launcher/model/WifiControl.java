@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
@@ -22,7 +21,7 @@ import cn.modificator.launcher.widgets.RatioImageView;
 
 /**
  * WiFi 状态管理及 UI 绑定。
- * 通过 {@link #init(Context)} 初始化单例，{@link #bind(View, List, List)} 绑定视图。
+ * 通过 {@link #init(Context)} 初始化单例，{@link #bind(View, Map)} 绑定视图。
  */
 public class WifiControl {
 

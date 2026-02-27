@@ -44,12 +44,6 @@ public class AppDataCenter {
 
   public void setLauncherView(EInkLauncherView launcherView) {
     this.launcherView = launcherView;
-    this.launcherView.setOnSingleAppHideChangeListener(new EInkLauncherView.OnSingleAppHideChange() {
-      @Override
-      public void change(String pkg) {
-        refreshAppList();
-      }
-    });
     launcherView.setHideAppPkg(hideApps);
     setPageShow();
   }
