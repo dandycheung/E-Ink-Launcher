@@ -41,11 +41,13 @@ import cn.modificator.launcher.model.IconCache;
 import cn.modificator.launcher.model.WifiControl;
 import cn.modificator.launcher.widgets.BatteryView;
 import cn.modificator.launcher.widgets.EInkLauncherView;
+import cn.modificator.launcher.widgets.LauncherAdapter;
 
 /**
  * 主界面 Activity - E-Ink 墨水屏桌面启动器。
  */
-public class Launcher extends Activity implements EInkLauncherView.Callback {
+public class Launcher extends Activity
+    implements LauncherAdapter.Callback, EInkLauncherView.OnPageChangeListener {
 
   /** 广播 Action：设置页通过广播通知主界面刷新 */
   public static final String ACTION_LAUNCHER_UPDATE = "launcherReceiver";
@@ -65,6 +67,7 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
   private Calendar calendar;
   private boolean isChina = true;
   private IconCache iconCache;
+  private LauncherAdapter adapter;
   private boolean isSystemApp = false;
 
   // ---- Device Admin ----
@@ -96,7 +99,7 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
     @Override
     public void onReceive(Context context, Intent intent) {
       iconCache.clearAppCache();
-      dataCenter.refreshAppList(launcherView.isDelete());
+      dataCenter.refreshAppList(adapter.isDelete());
     }
   };
 
@@ -170,22 +173,25 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
         Utils.tintDrawable(getResources().getDrawable(R.drawable.navibar_icon_settings_highlight),
             ColorStateList.valueOf(0xff000000)));
 
-    // 配置 LauncherView
+    // 配置 Adapter & View
     iconCache = new IconCache();
-    launcherView.setCallback(this);
-    launcherView.setIconCache(iconCache);
-    launcherView.setHideAppPkg(config.getHideApps());
+    adapter = new LauncherAdapter(getPackageManager());
+    adapter.setCallback(this);
+    adapter.setIconCache(iconCache);
+    adapter.setHideAppPkg(config.getHideApps());
+    adapter.setFontSize(config.getFontSize());
+    adapter.setAppNameLines(config.getAppNameLines());
+    launcherView.setAdapter(adapter);
+    launcherView.setOnPageChangeListener(this);
 
     // 初始化数据中心
     dataCenter = new AppDataCenter(this);
     dataCenter.setHideApps(config.getHideApps());
     dataCenter.setPageStatus(pageStatus);
-    dataCenter.setLauncherView(launcherView);
+    dataCenter.setAdapter(adapter);
 
     // 一次性配置网格参数，避免多次重建
-    launcherView.configure(
-        config.getColNum(), config.getRowNum(),
-        config.isHideDivider(), config.getFontSize(), config.getAppNameLines());
+    launcherView.configure(config.getColNum(), config.getRowNum(), config.isHideDivider());
     dataCenter.setGridSize(config.getColNum(), config.getRowNum());
 
     // 翻页按钮
@@ -217,7 +223,7 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
     findViewById(R.id.deleteFinish).setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View v) {
-        launcherView.setDelete(false);
+        adapter.setDelete(false);
         dataCenter.refreshAppList();
         config.setHideApps(dataCenter.getHideApps());
         v.setVisibility(View.GONE);
@@ -231,7 +237,6 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
     // 检测系统应用
     try {
       isSystemApp = !isUserApp(getPackageManager().getPackageInfo(getPackageName(), 0));
-      launcherView.setSystemApp(isSystemApp);
     } catch (PackageManager.NameNotFoundException e) {
       e.printStackTrace();
     }
@@ -254,13 +259,13 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
   }
 
   private void refreshIcons() {
-    if (launcherView == null || iconCache == null) return;
+    if (adapter == null || iconCache == null) return;
     iconCache.refreshCustomIcons(getExternalCacheDir() != null, config.isShowCustomIcon());
-    launcherView.refreshDisplay();
+    adapter.refreshDisplay();
   }
 
   // =========================================================================
-  // EInkLauncherView.Callback 实现
+  // LauncherAdapter.Callback 实现
   // =========================================================================
 
   @Override
@@ -306,13 +311,17 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
     // 管理模式下的隐藏切换仅更新 UI 状态，"完成" 按钮处理持久化
   }
 
+  // =========================================================================
+  // EInkLauncherView.OnPageChangeListener 实现
+  // =========================================================================
+
   @Override
-  public void onSwipeNext() {
+  public void onPageNext() {
     dataCenter.showNextPage();
   }
 
   @Override
-  public void onSwipePrev() {
+  public void onPagePrev() {
     dataCenter.showLastPage();
   }
 
@@ -347,7 +356,7 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
         .setNeutralButton(R.string.dialog_hide, new DialogInterface.OnClickListener() {
           @Override
           public void onClick(DialogInterface dialog, int which) {
-            Set<String> hideApps = launcherView.getHideAppPkg();
+            Set<String> hideApps = adapter.getHideAppPkg();
             if (!hideApps.add(packageName)) {
               hideApps.remove(packageName);
             }
@@ -518,11 +527,11 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
       } else if (bundle.containsKey(Config.KEY_COL_NUM)) {
         updateColNum(bundle.getInt(Config.KEY_COL_NUM));
       } else if (bundle.containsKey(Config.KEY_HIDE_APPS)) {
-        launcherView.setDelete(true);
+        adapter.setDelete(true);
         dataCenter.refreshAppList(true);
         findViewById(R.id.deleteFinish).setVisibility(View.VISIBLE);
       } else if (bundle.containsKey(Config.KEY_FONT_SIZE)) {
-        launcherView.setFontSize(bundle.getFloat(Config.KEY_FONT_SIZE));
+        adapter.setFontSize(bundle.getFloat(Config.KEY_FONT_SIZE));
       } else if (bundle.containsKey(Config.KEY_HIDE_DIVIDER)) {
         boolean hide = bundle.getBoolean(Config.KEY_HIDE_DIVIDER);
         launcherView.setHideDivider(hide);
@@ -538,7 +547,7 @@ public class Launcher extends Activity implements EInkLauncherView.Callback {
         int lines = bundle.getInt(Config.KEY_APP_NAME_LINES);
         if (lines == 3) lines = Integer.MAX_VALUE;
         config.setAppNameLines(lines);
-        launcherView.setAppNameLines(lines);
+        adapter.setAppNameLines(lines);
       }
     }
   }

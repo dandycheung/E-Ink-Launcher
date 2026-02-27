@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Set;
 
 import cn.modificator.launcher.R;
-import cn.modificator.launcher.widgets.EInkLauncherView;
+import cn.modificator.launcher.widgets.LauncherAdapter;
 
 /**
  * 应用数据管理中心，负责加载应用列表和分页逻辑。
@@ -30,7 +30,7 @@ public class AppDataCenter {
   private int pageCount = 0;
   private int colNum = 5;
   private int rowNum = 5;
-  private EInkLauncherView launcherView;
+  private LauncherAdapter adapter;
   private TextView pageStatus;
   private final Set<String> hideApps = new HashSet<>();
 
@@ -39,12 +39,12 @@ public class AppDataCenter {
   }
 
   // =========================================================================
-  // View 绑定
+  // Adapter 绑定
   // =========================================================================
 
-  public void setLauncherView(EInkLauncherView launcherView) {
-    this.launcherView = launcherView;
-    launcherView.setHideAppPkg(hideApps);
+  public void setAdapter(LauncherAdapter adapter) {
+    this.adapter = adapter;
+    adapter.setHideAppPkg(hideApps);
     setPageShow();
   }
 
@@ -132,9 +132,9 @@ public class AppDataCenter {
     Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
     mainIntent.addCategory(Intent.CATEGORY_LAUNCHER);
 
-    if (launcherView != null) {
+    if (adapter != null) {
       hideApps.clear();
-      hideApps.addAll(launcherView.getHideAppPkg());
+      hideApps.addAll(adapter.getHideAppPkg());
     }
 
     mApps.clear();
@@ -162,7 +162,7 @@ public class AppDataCenter {
     mApps.addAll(mContext.getPackageManager().queryIntentActivities(mainIntent, 0));
     mApps.add(createPowerIcon());
     mApps.add(createWifiIcon());
-    launcherView.setHideAppPkg(hideApps);
+    adapter.setHideAppPkg(hideApps);
     updatePageCount();
   }
 
@@ -170,7 +170,7 @@ public class AppDataCenter {
     int itemCount = colNum * rowNum;
     int pageStart = pageIndex * itemCount;
     int pageEnd = Math.min(pageStart + itemCount, mApps.size());
-    launcherView.setAppList(mApps.subList(pageStart, pageEnd));
+    adapter.setAppList(mApps.subList(pageStart, pageEnd));
     pageStatus.setText((pageIndex + 1) + "/" + (pageCount + 1));
   }
 
